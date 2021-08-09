@@ -4,6 +4,17 @@ parser=ArgumentParser()
 
 # Global
 parser.add_argument('--gpu', type=str, dest='gpu', default='0')
+parser.add_argument('--gpu_ids', type=str, default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
+parser.add_argument('--rgb_range', type=int, default=255,
+                    help='maximum value of RGB')
+parser.add_argument('--n_colors', type=int, default=3,
+                    help='number of color channels to use')
+parser.add_argument('--n_feats', type=int, default=256,
+                    help='number of feature maps')
+parser.add_argument('--scale', type=str, default='2',
+                    help='super resolution scale')
+parser.add_argument('--work_dir', type=str, default='./experiments_m',
+                    help='the directory to save the results of experiments')
 
 # For Meta-test
 parser.add_argument('--inputpath', type=str, dest='inputpath', default='TestSet/Set5/g13/LR/')
@@ -18,8 +29,11 @@ parser.add_argument('--trial', type=int, dest='trial', default=0)
 parser.add_argument('--step', type=int, dest='step', default=0)
 parser.add_argument('--train', dest='is_train', default=False, action='store_true')
 
-args= parser.parse_args()
+# for loss
+parser.add_argument('--use_weighted_loss', dest='use_weighted_loss', default=False, action='store_true')
 
+args= parser.parse_args()
+args.scale = list(map(lambda x: int(x), args.scale.split('+')))
 #Transfer Learning From Pre-trained model.
 IS_TRANSFER = True
 TRANS_MODEL = 'Pretrained/Pretrained'
@@ -41,5 +55,7 @@ TASK_BATCH_SIZE=8
 TASK_LR=1e-2
 
 # Loading tfrecord and saving paths
-TFRECORD_PATH='train_SR_MZSR.tfrecord'
 CHECKPOINT_DIR='SR'
+LOAD_FROM= './checkpoint1/model_latest.pth' #'/home/songtingting02/stt/EDSR-PyTorch-master/experiment/edsr_x2/model/model_best.pt'
+LOAD_FROM_meta='./experiments_m_weighted/20210806_162412/checkpoint/model_15000.pth'  #  ./experiments_m/20210806_102824/checkpoint/model_2000.pth
+#./experiments_m_weighted/20210806_162412/checkpoint/model_15000.pth
