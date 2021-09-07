@@ -1,5 +1,39 @@
 import torch
 import torch.nn as nn
+from torch.nn import functional as F
+import math
+def default_conv(in_channels, out_channels, kernel_size, bias=True): #一个普通的卷积层
+    return nn.Conv2d(
+        in_channels, out_channels, kernel_size,
+        padding=(kernel_size//2), bias=bias)
+class Upsampler(nn.Sequential):
+    def __init__(self, conv, scale, n_feats, bn=False, act=False, bias=True):
+
+        m = []
+        if (scale & (scale - 1)) == 0:    # Is scale = 2^n? 如果是2^n 那么这个与的结果就是0
+            for _ in range(int(math.log(scale, 2))):  #log2^4
+                m.append(conv(n_feats, 4 * n_feats, 3, bias))
+                m.append(nn.PixelShuffle(2)) #stride=1/r 时，sub-pixel convolution 2是上采样因子，也就是图像的扩大倍率
+                if bn:
+                    m.append(nn.BatchNorm2d(n_feats))
+                if act == 'relu':
+                    m.append(nn.ReLU(True))
+                elif act == 'prelu':
+                    m.append(nn.PReLU(n_feats))
+
+        elif scale == 3:
+            m.append(conv(n_feats, 9 * n_feats, 3, bias))
+            m.append(nn.PixelShuffle(3))
+            if bn:
+                m.append(nn.BatchNorm2d(n_feats))
+            if act == 'relu':
+                m.append(nn.ReLU(True))
+            elif act == 'prelu':
+                m.append(nn.PReLU(n_feats))
+        else:
+            raise NotImplementedError
+
+        super(Upsampler, self).__init__(*m)
 
 class ResBlock(nn.Module):
     def __init__(self, channels=64, kernel_size=3):
@@ -12,9 +46,48 @@ class ResBlock(nn.Module):
         out = self.relu(self.conv1(x))
         out = self.conv2(out)
         return out+x
-    
-    
-    
+
+class BasicBlock(nn.Sequential):
+    def __init__(
+        self, conv, in_channels, out_channels, kernel_size, stride=1, bias=False,
+        bn=True, act=nn.ReLU(True)):
+
+        m = [conv(in_channels, out_channels, kernel_size, bias=bias)]
+        if bn:
+            m.append(nn.BatchNorm2d(out_channels))
+        if act is not None:
+            m.append(act)
+
+        super(BasicBlock, self).__init__(*m)
+class Net(nn.Module):
+    def __init__(self, input_channels=3, kernel_size=3, channels=64):
+        super(Net, self).__init__()
+
+        self.entry = nn.Conv2d(input_channels, channels, kernel_size=kernel_size, padding=kernel_size//2, bias=True)
+
+        self.resblock1 = ResBlock()
+        self.resblock2 = ResBlock()
+        self.resblock3 = ResBlock()
+
+        self.out = nn.Conv2d(channels, input_channels, kernel_size=kernel_size, padding=kernel_size//2, bias=True)
+
+        self.relu = nn.ReLU(inplace=True)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight.data, mode='fan_out', nonlinearity='relu')
+
+    def forward(self, x):
+        input = x
+        x = self.relu(self.entry(x))
+        x = self.resblock1(x)
+        x = self.resblock2(x)
+        x = self.resblock3(x)
+
+        x = self.out(x)
+
+        return x + input
+
 class Learner(nn.Module):
     """
 
@@ -244,34 +317,19 @@ class Learner(nn.Module):
         :return:
         """
         return self.vars
-class Net(nn.Module):
-    def __init__(self, input_channels=3, kernel_size=3, channels=64):
-        super(Net, self).__init__()
 
-        self.entry = nn.Conv2d(input_channels, channels, kernel_size=kernel_size, padding=kernel_size//2, bias=True)
+class MeanShift(nn.Conv2d):  #adds/subtracts channel-wise mean from the input/output images.
+    def __init__(
+        self, rgb_range,
+        rgb_mean=(0.4488, 0.4371, 0.4040), rgb_std=(1.0, 1.0, 1.0), sign=-1):
 
-        self.resblock1 = ResBlock()
-        self.resblock2 = ResBlock()
-        self.resblock3 = ResBlock()
+        super(MeanShift, self).__init__(3, 3, kernel_size=1)
+        std = torch.Tensor(rgb_std)
+        self.weight.data = torch.eye(3).view(3, 3, 1, 1) / std.view(3, 1, 1, 1)
+        self.bias.data = sign * rgb_range * torch.Tensor(rgb_mean) / std
+        for p in self.parameters():
+            p.requires_grad = False
 
-        self.out = nn.Conv2d(channels, input_channels, kernel_size=kernel_size, padding=kernel_size//2, bias=True)
-
-        self.relu = nn.ReLU(inplace=True)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight.data, mode='fan_out', nonlinearity='relu')
-
-    def forward(self, x):
-        input = x
-        x = self.relu(self.entry(x))
-        x = self.resblock1(x)
-        x = self.resblock2(x)
-        x = self.resblock3(x)
-
-        x = self.out(x)
-
-        return x + input
 
 if __name__ == '__main__':
     input = torch.randn(1,3,32,32)
